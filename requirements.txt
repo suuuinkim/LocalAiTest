@@ -1,0 +1,7 @@
+# Mobility Dev AI - 로컬 전용 (외부 AI API 미사용)
+requests>=2.31
+pypdf>=4.0
+python-docx>=1.1
+python-pptx>=1.0
+# Phase 6 (웹 UI)에서 설치 예정
+# streamlit>=1.40
