@@ -337,3 +337,186 @@ def init_db(backup=True):
     finally:
         conn.close()
     return applied
+
+
+# ---------------------------------------------------------------------------
+# 문서 (documents / document_chunks)
+# ---------------------------------------------------------------------------
+def find_document_by_hash(content_hash):
+    """동일한 내용의 문서(모든 버전 포함)를 찾습니다."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM documents WHERE content_hash=? ORDER BY is_active DESC, id DESC LIMIT 1",
+            (content_hash,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def find_latest_by_file_name(file_name):
+    """같은 파일명의 최신 문서(버전 계보 판단용)."""
+    with connect() as conn:
+        row = conn.execute(
+            """SELECT * FROM documents WHERE file_name=?
+               ORDER BY is_active DESC, version DESC, id DESC LIMIT 1""",
+            (file_name,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def next_version(doc_uid):
+    with connect() as conn:
+        return conn.execute(
+            "SELECT COALESCE(MAX(version), 0) + 1 FROM documents WHERE doc_uid=?", (doc_uid,)
+        ).fetchone()[0]
+
+
+def _insert_chunks(conn, document_id, chunks, ts):
+    for index, chunk in enumerate(chunks):
+        conn.execute(
+            """INSERT INTO document_chunks (document_id, chunk_index, content, page_start,
+                   page_end, char_count, embedding, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (document_id, index, chunk["content"], chunk.get("page_start"),
+             chunk.get("page_end"), len(chunk["content"]), pack_vector(chunk["vector"]), ts),
+        )
+
+
+def create_document(meta, chunks):
+    """문서와 청크를 한 트랜잭션으로 저장합니다.
+
+    meta: doc_uid, version, title, file_name, file_type, file_size, content_hash,
+          stored_path, category, note, source, embed_model
+    chunks: [{"content", "page_start", "page_end", "vector"}]
+    같은 doc_uid의 이전 버전은 비활성화됩니다(삭제하지 않음).
+    """
+    ts = now()
+    with connect() as conn:
+        conn.execute("UPDATE documents SET is_active=0, updated_at=? WHERE doc_uid=?",
+                     (ts, meta["doc_uid"]))
+        cur = conn.execute(
+            """INSERT INTO documents (doc_uid, version, is_active, title, file_name, file_type,
+                   file_size, content_hash, stored_path, category, note, status, source,
+                   chunk_count, embed_model, created_at, updated_at)
+               VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?)""",
+            (meta["doc_uid"], meta["version"], meta["title"], meta.get("file_name"),
+             meta["file_type"], meta.get("file_size"), meta["content_hash"],
+             meta.get("stored_path"), meta.get("category"), meta.get("note"),
+             meta.get("source", "upload"), len(chunks), meta.get("embed_model"), ts, ts),
+        )
+        doc_id = cur.lastrowid
+        _insert_chunks(conn, doc_id, chunks, ts)
+        return doc_id
+
+
+def replace_chunks(document_id, chunks, embed_model=None, status="ready"):
+    """재임베딩: 해당 문서 버전의 청크를 원자적으로 교체합니다."""
+    ts = now()
+    with connect() as conn:
+        conn.execute("DELETE FROM document_chunks WHERE document_id=?", (document_id,))
+        _insert_chunks(conn, document_id, chunks, ts)
+        conn.execute(
+            """UPDATE documents SET chunk_count=?, embed_model=COALESCE(?, embed_model),
+                   status=?, updated_at=? WHERE id=?""",
+            (len(chunks), embed_model, status, ts, document_id),
+        )
+
+
+def list_documents(include_inactive=False):
+    sql = "SELECT * FROM documents"
+    if not include_inactive:
+        sql += " WHERE is_active=1"
+    sql += " ORDER BY updated_at DESC, id DESC"
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(sql).fetchall()]
+
+
+def get_document(document_id):
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM documents WHERE id=?", (document_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def list_document_versions(doc_uid):
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM documents WHERE doc_uid=? ORDER BY version DESC", (doc_uid,)
+        ).fetchall()]
+
+
+def get_document_chunks(document_id, with_vectors=False):
+    cols = "id, chunk_index, content, page_start, page_end, char_count"
+    if with_vectors:
+        cols += ", embedding"
+    with connect() as conn:
+        rows = conn.execute(
+            f"SELECT {cols} FROM document_chunks WHERE document_id=? ORDER BY chunk_index",
+            (document_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_document_meta(document_id, title=None, category=None, note=None):
+    with connect() as conn:
+        cur = conn.execute(
+            """UPDATE documents SET title=COALESCE(?, title), category=COALESCE(?, category),
+                   note=COALESCE(?, note), updated_at=? WHERE id=?""",
+            (title, category, note, now(), document_id),
+        )
+        return cur.rowcount > 0
+
+
+def set_active_version(document_id):
+    """특정 버전을 검색 대상(활성)으로 지정하고 같은 문서의 다른 버전은 비활성화합니다."""
+    with connect() as conn:
+        row = conn.execute("SELECT doc_uid FROM documents WHERE id=?", (document_id,)).fetchone()
+        if not row:
+            return False
+        ts = now()
+        conn.execute("UPDATE documents SET is_active=0, updated_at=? WHERE doc_uid=?",
+                     (ts, row["doc_uid"]))
+        conn.execute("UPDATE documents SET is_active=1, updated_at=? WHERE id=?", (ts, document_id))
+        return True
+
+
+def delete_document_version(document_id):
+    """문서의 한 버전을 삭제합니다. 활성 버전이었다면 남은 최신 버전을 활성화합니다.
+
+    반환: 삭제된 문서 dict (없으면 None)
+    """
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM documents WHERE id=?", (document_id,)).fetchone()
+        if not row:
+            return None
+        conn.execute("DELETE FROM documents WHERE id=?", (document_id,))
+        if row["is_active"]:
+            latest = conn.execute(
+                "SELECT id FROM documents WHERE doc_uid=? ORDER BY version DESC LIMIT 1",
+                (row["doc_uid"],),
+            ).fetchone()
+            if latest:
+                conn.execute("UPDATE documents SET is_active=1, updated_at=? WHERE id=?",
+                             (now(), latest["id"]))
+        return dict(row)
+
+
+def delete_document_all_versions(doc_uid):
+    """문서 전체(모든 버전과 청크)를 삭제합니다. 반환: 삭제된 문서 행 목록."""
+    with connect() as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM documents WHERE doc_uid=?", (doc_uid,)
+        ).fetchall()]
+        conn.execute("DELETE FROM documents WHERE doc_uid=?", (doc_uid,))
+        return rows
+
+
+def active_chunks():
+    """검색 대상 청크 (활성 문서만)."""
+    with connect() as conn:
+        rows = conn.execute(
+            """SELECT c.id AS chunk_id, c.document_id, c.chunk_index, c.content,
+                      c.page_start, c.page_end, c.embedding,
+                      d.title, d.file_type, d.version, d.category
+               FROM document_chunks c JOIN documents d ON d.id = c.document_id
+               WHERE d.is_active = 1"""
+        ).fetchall()
+    return [dict(r) for r in rows]
