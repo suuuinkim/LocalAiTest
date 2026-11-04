@@ -520,3 +520,80 @@ def active_chunks():
                WHERE d.is_active = 1"""
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# 지식 (knowledge_items)
+# ---------------------------------------------------------------------------
+def add_knowledge_item(kind, title, content, vector, tags=None, source="user",
+                       source_message_id=None):
+    ts = now()
+    with connect() as conn:
+        cur = conn.execute(
+            """INSERT INTO knowledge_items (kind, title, content, tags, embedding, source,
+                   source_message_id, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (kind, title, content, tags, pack_vector(vector), source, source_message_id, ts, ts),
+        )
+        return cur.lastrowid
+
+
+def list_knowledge_items(kind=None):
+    sql = "SELECT id, kind, title, content, tags, source, created_at, updated_at FROM knowledge_items"
+    params = ()
+    if kind:
+        sql += " WHERE kind=?"
+        params = (kind,)
+    sql += " ORDER BY id"
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+
+def get_knowledge_item(item_id):
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT id, kind, title, content, tags, source, created_at, updated_at "
+            "FROM knowledge_items WHERE id=?", (item_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def update_knowledge_item(item_id, title, content, vector, kind=None, tags=None):
+    with connect() as conn:
+        cur = conn.execute(
+            """UPDATE knowledge_items SET title=?, content=?, embedding=?,
+                   kind=COALESCE(?, kind), tags=COALESCE(?, tags), updated_at=?
+               WHERE id=?""",
+            (title, content, pack_vector(vector), kind, tags, now(), item_id),
+        )
+        return cur.rowcount > 0
+
+
+def delete_knowledge_item(item_id):
+    with connect() as conn:
+        return conn.execute("DELETE FROM knowledge_items WHERE id=?", (item_id,)).rowcount > 0
+
+
+def knowledge_items_with_vectors():
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT id, kind, title, content, embedding FROM knowledge_items"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# 이전 코드 호환용 이름 (knowledge 테이블 → knowledge_items)
+def add_knowledge(kind, title, content, vector):
+    return add_knowledge_item(kind, title, content, vector)
+
+
+def list_knowledge():
+    return [(i["id"], i["kind"], i["title"]) for i in list_knowledge_items()]
+
+
+def update_knowledge(item_id, title, content, vector):
+    return update_knowledge_item(item_id, title, content, vector)
+
+
+def delete_knowledge(item_id):
+    return delete_knowledge_item(item_id)
