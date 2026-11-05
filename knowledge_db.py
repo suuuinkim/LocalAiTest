@@ -597,3 +597,111 @@ def update_knowledge(item_id, title, content, vector):
 
 def delete_knowledge(item_id):
     return delete_knowledge_item(item_id)
+
+
+# ---------------------------------------------------------------------------
+# 대화 (chat_sessions / chat_messages)
+# ---------------------------------------------------------------------------
+def create_session(title="새 대화", mode="general", session_id=None):
+    session_id = session_id or uuid.uuid4().hex
+    ts = now()
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO chat_sessions (id, title, mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (session_id, title, mode, ts, ts),
+        )
+    return session_id
+
+
+def ensure_session(session_id, title="새 대화", mode="general"):
+    ts = now()
+    with connect() as conn:
+        conn.execute(
+            """INSERT OR IGNORE INTO chat_sessions (id, title, mode, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (session_id, title, mode, ts, ts),
+        )
+    return session_id
+
+
+def get_session(session_id):
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM chat_sessions WHERE id=?", (session_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def list_sessions(mode=None):
+    sql = """SELECT s.*, (SELECT count(*) FROM chat_messages m WHERE m.session_id = s.id)
+                    AS message_count
+             FROM chat_sessions s"""
+    params = ()
+    if mode:
+        sql += " WHERE s.mode=?"
+        params = (mode,)
+    sql += " ORDER BY s.updated_at DESC"
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+
+def rename_session(session_id, title):
+    with connect() as conn:
+        return conn.execute(
+            "UPDATE chat_sessions SET title=?, updated_at=? WHERE id=?", (title, now(), session_id)
+        ).rowcount > 0
+
+
+def delete_session(session_id):
+    with connect() as conn:
+        return conn.execute("DELETE FROM chat_sessions WHERE id=?", (session_id,)).rowcount > 0
+
+
+def save_message(session_id, role, content, sources=None):
+    ensure_session(session_id)
+    ts = now()
+    with connect() as conn:
+        cur = conn.execute(
+            """INSERT INTO chat_messages (session_id, role, content, sources, created_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (session_id, role, content,
+             json.dumps(sources, ensure_ascii=False) if sources else None, ts),
+        )
+        conn.execute("UPDATE chat_sessions SET updated_at=? WHERE id=?", (ts, session_id))
+        return cur.lastrowid
+
+
+def get_messages(session_id, limit=8, with_meta=False):
+    """최근 메시지를 시간순으로 반환합니다. limit=None이면 전체."""
+    sql = "SELECT id, role, content, sources, created_at FROM chat_messages WHERE session_id=? ORDER BY id DESC"
+    params = [session_id]
+    if limit:
+        sql += " LIMIT ?"
+        params.append(limit)
+    with connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    rows = list(reversed(rows))
+    if with_meta:
+        return [
+            {**dict(r), "sources": json.loads(r["sources"]) if r["sources"] else []}
+            for r in rows
+        ]
+    return [{"role": r["role"], "content": r["content"]} for r in rows]
+
+
+def get_message(message_id):
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM chat_messages WHERE id=?", (message_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def db_stats():
+    with connect() as conn:
+        q = lambda sql: conn.execute(sql).fetchone()[0]
+        return {
+            "schema_version": q("PRAGMA user_version"),
+            "documents_active": q("SELECT count(*) FROM documents WHERE is_active=1"),
+            "documents_total": q("SELECT count(*) FROM documents"),
+            "chunks": q("SELECT count(*) FROM document_chunks"),
+            "knowledge_items": q("SELECT count(*) FROM knowledge_items"),
+            "sessions": q("SELECT count(*) FROM chat_sessions"),
+            "messages": q("SELECT count(*) FROM chat_messages"),
+        }
