@@ -157,3 +157,69 @@ def read_document(file_path):
     if path.suffix.lower() == ".pdf":
         return "\n".join(s["text"] for s in segments)
     return "\n".join(s["text"] for s in segments)
+
+
+# ---------------------------------------------------------------------------
+# 청크 분할
+# ---------------------------------------------------------------------------
+def _split_long_text(text, size, overlap):
+    """긴 텍스트를 문단/줄 경계를 우선해 size 이하 조각으로 나눕니다."""
+    if len(text) <= size:
+        return [text]
+    overlap = min(overlap, size // 4)  # overlap이 크면 같은 조각이 반복 생성됨
+    pieces = []
+    start = 0
+    while start < len(text):
+        end = min(start + size, len(text))
+        if end < len(text):
+            window = text[start:end]
+            cut = max(window.rfind("\n\n"), window.rfind("\n"), window.rfind(". "))
+            if cut > size // 2:
+                end = start + cut + 1
+        pieces.append(text[start:end].strip())
+        if end >= len(text):
+            break
+        start = max(end - overlap, start + 1)
+    return [p for p in pieces if p]
+
+
+def chunk_segments(segments, size=None, overlap=None, unit=None):
+    """위치 조각을 검색용 청크로 변환합니다.
+
+    - 짧은 페이지/슬라이드는 이웃과 합쳐 size 이내로 묶음 (page_start~page_end 기록)
+    - 긴 페이지는 size 단위로 분할 (같은 페이지 번호 유지)
+    - unit(예: '슬라이드')을 주면 각 조각 앞에 '[슬라이드 N]' 표식을 붙임
+    반환: [{"content", "page_start", "page_end"}]
+    """
+    size = size or config.CHUNK_SIZE
+    overlap = config.CHUNK_OVERLAP if overlap is None else overlap
+    chunks = []
+    buffer, buf_start, buf_end = [], None, None
+
+    def flush():
+        nonlocal buffer, buf_start, buf_end
+        if buffer:
+            chunks.append({"content": "\n\n".join(buffer), "page_start": buf_start, "page_end": buf_end})
+        buffer, buf_start, buf_end = [], None, None
+
+    for segment in segments:
+        text = segment["text"].strip()
+        if not text:
+            continue
+        page = segment["page"]
+        if unit and page is not None:
+            text = f"[{unit} {page}]\n{text}"
+        if len(text) > size:
+            flush()
+            for piece in _split_long_text(text, size, overlap):
+                chunks.append({"content": piece, "page_start": page, "page_end": page})
+            continue
+        current_len = sum(len(b) + 2 for b in buffer)
+        if buffer and current_len + len(text) > size:
+            flush()
+        if not buffer:
+            buf_start = page
+        buffer.append(text)
+        buf_end = page
+    flush()
+    return chunks
