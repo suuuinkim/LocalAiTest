@@ -22,6 +22,11 @@ EMBED_MODEL = os.environ.get("MOBILITY_AI_EMBED_MODEL", "bge-m3")
 OLLAMA_TIMEOUT = 300
 EMBED_BATCH_SIZE = 16
 
+# --- 검색 ---
+# 벡터 검색과 BM25 키워드 검색을 RRF로 결합합니다. "0"이면 벡터 검색만 사용합니다.
+HYBRID_SEARCH = os.environ.get("MOBILITY_AI_HYBRID", "1") != "0"
+RRF_K = 60
+
 # --- 문서 처리 ---
 ALLOWED_EXTENSIONS = {".pdf", ".pptx", ".docx", ".txt", ".md"}
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50MB

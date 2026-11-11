@@ -363,6 +363,38 @@ class KnowledgeAndChatTest(TempEnv):
         results = rag.search_knowledge("샘플", limit=10)
         self.assertEqual({r["type"] for r in results}, {"document", "knowledge"})
 
+    def test_tokenize(self):
+        self.assertEqual(rag.tokenize("승인은"), ["승인", "인은"])
+        self.assertEqual(rag.tokenize("값"), ["값"])
+        self.assertEqual(rag.tokenize("RQ-AB-F001"), ["rq-ab-f001", "rq", "ab", "f001"])
+        self.assertEqual(rag.tokenize("!?"), [])
+
+    def test_bm25_scores(self):
+        scores = rag.bm25_scores("zeta", ["alpha beta", "zeta zeta gamma", "delta"])
+        self.assertEqual(scores[0], 0)
+        self.assertEqual(scores[2], 0)
+        self.assertGreater(scores[1], 0)
+        self.assertEqual(rag.bm25_scores("zeta", []), [])
+        self.assertEqual(rag.bm25_scores("!?", ["alpha"]), [0.0])
+
+    def test_hybrid_promotes_exact_id(self):
+        for i in range(12):
+            docs.register_upload(f"filler{i}.txt", f"일반 내용 {i}번 문서".encode(), embedder=fake_embed)
+        docs.register_upload("target.txt", "요구사항 RQ-XY-F777 설명".encode(), embedder=fake_embed)
+        with mock.patch.object(config, "HYBRID_SEARCH", True):
+            results = rag.search_knowledge("RQ-XY-F777", limit=3)
+        self.assertEqual(results[0]["title"], "target.txt")
+        self.assertGreater(results[0]["keyword_score"], 0)
+
+    def test_hybrid_can_be_disabled(self):
+        for i in range(3):
+            docs.register_upload(f"d{i}.txt", f"내용 {i}".encode(), embedder=fake_embed)
+        with mock.patch.object(config, "HYBRID_SEARCH", False):
+            results = rag.search_knowledge("내용", limit=3)
+        self.assertEqual([r["score"] for r in results],
+                         sorted((r["score"] for r in results), reverse=True))
+        self.assertNotIn("hybrid_score", results[0])
+
 
 # ---------------------------------------------------------------------------
 def ollama_available():

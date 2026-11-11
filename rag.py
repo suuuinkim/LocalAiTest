@@ -5,6 +5,7 @@ Phase 2에서 검색 정확도/응답 정책을 고도화할 예정입니다.
 """
 import math
 import re
+from collections import Counter
 
 import requests
 
@@ -79,11 +80,71 @@ def add_text(kind, title, content):
 # ---------------------------------------------------------------------------
 # 검색
 # ---------------------------------------------------------------------------
+_TOKEN_PATTERN = re.compile(r"[a-z0-9]+(?:[-_][a-z0-9]+)*|[가-힣]+")
+
+
+def tokenize(text):
+    """키워드 검색용 토큰. 한글은 조사 변화에 강하도록 2글자 단위로 나눕니다."""
+    tokens = []
+    for word in _TOKEN_PATTERN.findall(text.lower()):
+        if "가" <= word[0] <= "힣":
+            tokens.extend(word[i:i + 2] for i in range(len(word) - 1) or [0])
+        else:
+            tokens.append(word)
+            parts = re.split(r"[-_]", word)
+            if len(parts) > 1:
+                tokens.extend(parts)
+    return tokens
+
+
+def bm25_scores(query, texts, k1=1.5, b=0.75):
+    """각 텍스트의 BM25 점수 목록을 반환합니다. 일치하는 단어가 없으면 0입니다."""
+    documents = [Counter(tokenize(text)) for text in texts]
+    if not documents:
+        return []
+    lengths = [sum(d.values()) for d in documents]
+    average = sum(lengths) / len(documents) or 1.0
+    scores = [0.0] * len(documents)
+    for term in set(tokenize(query)):
+        matched = sum(1 for d in documents if term in d)
+        if not matched:
+            continue
+        idf = math.log(1 + (len(documents) - matched + 0.5) / (matched + 0.5))
+        for i, document in enumerate(documents):
+            frequency = document[term]
+            if frequency:
+                norm = k1 * (1 - b + b * lengths[i] / average)
+                scores[i] += idf * frequency * (k1 + 1) / (frequency + norm)
+    return scores
+
+
+def apply_hybrid_ranking(question, results):
+    """벡터 순위와 키워드 순위를 RRF로 합쳐 results를 재정렬합니다."""
+    keyword = bm25_scores(question, [f"{r['title']}\n{r['content']}" for r in results])
+    fused = [0.0] * len(results)
+
+    by_vector = sorted(range(len(results)), key=lambda i: results[i]["score"], reverse=True)
+    for rank, i in enumerate(by_vector, start=1):
+        fused[i] += 1 / (config.RRF_K + rank)
+
+    matched = [i for i in range(len(results)) if keyword[i] > 0]
+    for rank, i in enumerate(sorted(matched, key=lambda i: keyword[i], reverse=True), start=1):
+        fused[i] += 1 / (config.RRF_K + rank)
+
+    for i, result in enumerate(results):
+        result["keyword_score"] = keyword[i]
+        result["hybrid_score"] = fused[i]
+    results.sort(key=lambda r: r["hybrid_score"], reverse=True)
+
+
 def search_knowledge(question, limit=5, min_score=0.0):
     """문서 청크 + 지식 항목을 함께 검색합니다.
 
+    score는 벡터 유사도이며 min_score는 이 값에 적용됩니다.
+    config.HYBRID_SEARCH가 켜져 있으면 벡터와 키워드 순위를 합쳐 정렬합니다.
+
     반환: [{"score", "type"(document/knowledge), "title", "content", "location",
-            "document_id", "chunk_id", "item_id"}] (점수 내림차순)
+            "document_id", "chunk_id", "item_id"}] (관련도 내림차순)
     """
     question_vector = embed([question])[0]
     results = []
@@ -116,6 +177,8 @@ def search_knowledge(question, limit=5, min_score=0.0):
 
     results = [r for r in results if r["score"] >= min_score]
     results.sort(key=lambda r: r["score"], reverse=True)
+    if config.HYBRID_SEARCH:
+        apply_hybrid_ranking(question, results)
     return results[:limit]
 
 
