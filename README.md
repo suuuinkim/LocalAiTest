@@ -111,6 +111,7 @@ DB는 첫 실행 시 자동으로 생성됩니다.
 | `MOBILITY_AI_CHAT_MODEL` | `qwen3:4b` | 답변 모델 |
 | `MOBILITY_AI_EMBED_MODEL` | `bge-m3` | 임베딩 모델 |
 | `MOBILITY_AI_HYBRID` | `1` | `0`이면 벡터 검색만 사용 |
+| `MOBILITY_AI_MIN_EVIDENCE_SCORE` | `0.45` | 답변 근거의 최소 코사인 유사도 (평가로 보정 필요) |
 
 ## 테스트
 
@@ -148,6 +149,37 @@ DB는 첫 실행 시 자동으로 생성됩니다.
 ```
 
 평가는 DB 사본에서 실행되어 원본 DB를 수정하지 않습니다.
+
+## 근거 부족 시 답변 보류 및 평가
+
+답변 생성에는 코사인 유사도가 `MOBILITY_AI_MIN_EVIDENCE_SCORE` 이상인 자료만 사용합니다.
+기본값 `0.45`는 초기 운영값이며 이 프로젝트의 실제 문서로 보정된 값은 아닙니다.
+통과한 자료가 없으면 답변 모델을 호출하지 않고 근거 부족을 안내합니다.
+RRF 점수는 순위 결합에만 사용하며 답변 신뢰 확률로 취급하지 않습니다.
+이 기준을 통과해도 내용의 사실성이나 출처의 정확성이 보장되지는 않습니다.
+
+`eval/questions.example.json`은 여러 문서와 근거 없는 질문을 함께 평가하는 형식 예시입니다.
+예시의 문서명·질문·정답을 실제 자료에 맞게 바꿔 `eval/questions.json`으로 저장하세요.
+각 질문의 `document`는 등록된 원본 파일명으로 지정하고, `gold_slides`에는 PDF 페이지 또는 PPTX 슬라이드 번호를 넣습니다.
+기존처럼 최상위 `document` 하나를 지정하는 형식도 지원합니다.
+
+```powershell
+.venv\Scripts\python.exe eval\run_eval.py --min-score 0.45 --label threshold045
+$env:MOBILITY_AI_MIN_EVIDENCE_SCORE = "0.45"
+.venv\Scripts\python.exe main.py
+```
+
+평가 결과에는 검색 Hit@k/MRR 외에 다음 값이 포함됩니다.
+
+- `positive_refusal_rate`: 정답 자료가 있는 질문을 보류한 비율
+- `negative_refusal_rate`: 근거 없는 질문을 보류한 비율
+- `negative_acceptance_rate`: 근거 없는 질문에서 자료가 하한을 통과한 비율
+- `accepted_hit_rate`: 정답 자료가 있는 질문 중 선택된 근거에 정답이 포함된 비율
+- `retrieval_seconds_avg`: 질문 임베딩과 검색·근거 선택의 평균 소요 시간
+
+이 평가는 검색과 근거 선택 정책만 측정합니다. 생성 답변의 오답률·출처 정확성은 별도 검토가 필요합니다.
+하한을 바꿔 근거 없는 질문의 통과율과 정상 질문의 보류율을 함께 비교하세요.
+평가 DB는 SQLite 백업 API로 복사하므로 WAL에 기록된 커밋도 포함되며 원본 DB는 읽기 전용으로 엽니다.
 
 ## 로드맵
 

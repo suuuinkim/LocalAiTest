@@ -1,0 +1,11 @@
+{
+  "description": "형식 예시입니다. 실제 등록한 문서명, 질문, 정답 페이지로 교체하세요. gold_slides는 PDF 페이지 번호도 지원하며 빈 배열은 근거가 없는 질문입니다.",
+  "questions": [
+    {"id": "AUTH01", "document": "인증설계.pdf", "question": "비밀번호 검증 실패 시 처리 절차는?", "gold_slides": [3]},
+    {"id": "AUTH02", "document": "인증설계.pdf", "question": "로그인 실패가 반복되면 계정이 어떻게 되나요?", "gold_slides": [4]},
+    {"id": "PAY01", "document": "결제설계.pdf", "question": "결제 승인 요청이 시간 초과되면 어떻게 처리하나요?", "gold_slides": [3]},
+    {"id": "PAY02", "document": "결제설계.pdf", "question": "중복 결제 요청 방지 조건은?", "gold_slides": [5]},
+    {"id": "N01", "question": "등록한 문서에 없는 내일의 점심 메뉴는?", "gold_slides": []},
+    {"id": "N02", "question": "문서에 정의되지 않은 관리자 계정의 실제 비밀번호는?", "gold_slides": []}
+  ]
+}

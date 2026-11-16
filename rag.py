@@ -1,7 +1,6 @@
 """임베딩, 검색, 답변 생성 (Ollama 로컬 전용).
 
-Phase 1: 새 스키마(document_chunks, knowledge_items) 기반 검색 + 출처(페이지/슬라이드) 표시.
-Phase 2에서 검색 정확도/응답 정책을 고도화할 예정입니다.
+문서/지식 하이브리드 검색, 근거 점수 하한, 답변 보류 및 출처 표시를 제공합니다.
 """
 import math
 import re
@@ -56,6 +55,8 @@ def embed(texts):
 
 
 def similarity(a, b):
+    if len(a) != len(b):
+        raise ValueError("임베딩 차원이 다릅니다. 현재 임베딩 모델로 문서를 재등록/재임베딩해 주세요.")
     dot = sum(x * y for x, y in zip(a, b))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(y * y for y in b))
@@ -143,6 +144,7 @@ def search_knowledge(question, limit=5, min_score=0.0):
     score는 벡터 유사도이며 min_score는 이 값에 적용됩니다.
     config.HYBRID_SEARCH가 켜져 있으면 벡터와 키워드 순위를 합쳐 정렬합니다.
 
+    limit=None이면 모든 후보를 반환합니다.
     반환: [{"score", "type"(document/knowledge), "title", "content", "location",
             "document_id", "chunk_id", "item_id"}] (관련도 내림차순)
     """
@@ -186,6 +188,17 @@ def source_label(match):
     return f"{match['title']} ({match['location']})" if match["location"] else match["title"]
 
 
+def select_evidence(matches, min_score=None):
+    """RRF 순서는 유지하고 원래 코사인 유사도로 근거 후보를 걸러냅니다.
+
+    점수는 사실성 확률이 아닙니다. 평가 데이터로 하한을 보정해야 합니다.
+    """
+    threshold = config.MIN_EVIDENCE_SCORE if min_score is None else min_score
+    if not 0 <= threshold <= 1:
+        raise ValueError("근거 점수 하한은 0~1 사이여야 합니다.")
+    return [m for m in matches if math.isfinite(m["score"]) and m["score"] >= threshold]
+
+
 # ---------------------------------------------------------------------------
 # 답변
 # ---------------------------------------------------------------------------
@@ -215,7 +228,17 @@ def clean_answer(answer):
 
 def ask_ai(question, session_id="default", limit=5):
     """질문에 답하고 대화를 저장합니다. 반환: (answer, sources 라벨 목록)"""
-    matches = search_knowledge(question, limit=limit)
+    if not question.strip():
+        raise ValueError("질문을 입력해 주세요.")
+    # 필터링 후 순위를 계산해야 낮은 벡터 점수의 키워드 일치가 근거를 밀어내지 않습니다.
+    matches = select_evidence(search_knowledge(
+        question, limit=limit, min_score=config.MIN_EVIDENCE_SCORE
+    ))
+    if not matches:
+        answer = "제공된 자료에서 질문에 답할 충분한 근거를 찾지 못했습니다. 관련 문서를 등록하거나 질문을 구체적으로 입력해 주세요."
+        save_message(session_id, "user", question)
+        save_message(session_id, "assistant", answer, sources=[])
+        return answer, []
 
     context = "\n\n".join(
         f"[자료 {i}] {source_label(m)}\n{m['content']}" for i, m in enumerate(matches, start=1)
