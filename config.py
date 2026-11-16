@@ -26,6 +26,8 @@ EMBED_BATCH_SIZE = 16
 # 벡터 검색과 BM25 키워드 검색을 RRF로 결합합니다. "0"이면 벡터 검색만 사용합니다.
 HYBRID_SEARCH = os.environ.get("MOBILITY_AI_HYBRID", "1") != "0"
 RRF_K = 60
+# 대화가 있는 경우 로컬 모델로 독립적인 검색 질문을 만듭니다.
+REWRITE_QUERY = os.environ.get("MOBILITY_AI_REWRITE_QUERY", "1") != "0"
 # 답변에 사용할 최소 코사인 유사도. 초기값이며 실제 평가 데이터로 보정하세요.
 MIN_EVIDENCE_SCORE = float(os.environ.get("MOBILITY_AI_MIN_EVIDENCE_SCORE", "0.45"))
 if not 0 <= MIN_EVIDENCE_SCORE <= 1:

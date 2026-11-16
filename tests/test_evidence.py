@@ -33,6 +33,7 @@ class EvidenceTest(unittest.TestCase):
         for matches in ([], [{"score": .1, "hybrid_score": 1}]):
             with self.subTest(matches=matches), \
                     mock.patch.object(rag, "search_knowledge", return_value=matches), \
+                    mock.patch.object(rag, "get_messages", return_value=[]), \
                     mock.patch.object(rag, "call_ollama") as generate, \
                     mock.patch.object(rag, "save_message") as save, \
                     mock.patch.object(config, "MIN_EVIDENCE_SCORE", .45):
