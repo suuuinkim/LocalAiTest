@@ -297,7 +297,8 @@ def ask_ai(question, session_id="default", limit=5):
 
     sources = [
         {"label": source_label(m), "score": round(m["score"], 4), "type": m["type"],
-         "document_id": m["document_id"], "chunk_id": m["chunk_id"], "item_id": m["item_id"]}
+         "document_id": m["document_id"], "chunk_id": m["chunk_id"], "item_id": m["item_id"],
+         "content": m["content"]}
         for m in matches
     ]
     save_message(session_id, "user", question)

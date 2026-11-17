@@ -1,5 +1,18 @@
 # Mobility Dev AI
 
+## 로컬 웹 UI
+
+```powershell
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m streamlit run web_app.py --server.address 127.0.0.1
+```
+
+브라우저에서 `http://127.0.0.1:8501`을 엽니다. Ollama와 기존 모델이 실행 가능한 상태여야 합니다.
+사이드바에서 문서를 등록하고 대화를 만들거나 전환할 수 있습니다.
+답변 아래의 **검색 근거 원문**을 펼치면 문서명, 페이지/슬라이드, 유사도와 원문을 확인할 수 있습니다.
+근거 원문은 답변 시점의 내용을 대화와 함께 저장하므로 이후 문서를 재임베딩해도 유지됩니다.
+기존 대화에는 원문이 없을 수 있습니다. CLI와 웹은 같은 로컬 DB를 사용합니다.
+
 문서를 등록하면 그 내용을 근거로 답변하는 **로컬 전용 RAG 챗봇**입니다.
 Ollama와 SQLite만 사용하므로 문서와 대화 내용이 PC 밖으로 나가지 않고, 외부 AI API 키도 필요 없습니다.
 

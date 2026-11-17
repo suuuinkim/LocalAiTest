@@ -61,6 +61,7 @@ class EvidenceTest(unittest.TestCase):
             self.assertEqual(sources, ["설계 (페이지 2)"])
             self.assertNotIn("무관한 자료", generate.call_args.args[1]["messages"][0]["content"])
             self.assertEqual(len(save.call_args.kwargs["sources"]), 1)
+            self.assertEqual(save.call_args.kwargs["sources"][0]["content"], "승인 조건")
 
     def test_blank_question_has_no_side_effects(self):
         with mock.patch.object(rag, "search_knowledge") as search:
